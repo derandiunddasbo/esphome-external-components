@@ -1,0 +1,1 @@
+- [fingerprint_grow_extended](components/fingerprint_grow_extended/README.md) — R503/Grow fingerprint sensor add-on: slot occupancy, slot moves, template backup/restore

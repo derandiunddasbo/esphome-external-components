@@ -1,0 +1,89 @@
+esphome:
+  name: fingerprint-example
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+external_components:
+  - source: github://<user>/<repository>@v1.0.0
+    components: [fingerprint_grow_extended]
+    refresh: never
+
+# One shared UART bus for both components (same R503 sensor)
+uart:
+  tx_pin: GPIO17
+  rx_pin: GPIO5
+  baud_rate: 57600
+
+# Original ESPHome component (unchanged)
+fingerprint_grow:
+  password: !secret password_fingerprint_grow
+
+# This add-on component
+fingerprint_grow_extended:
+  id: fingerprint_grow_extended_id
+  password: !secret password_fingerprint_grow
+
+api:
+  actions:
+    # Query slot occupancy
+    - action: get_slot_map
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              auto result = id(fingerprint_grow_extended_id).get_slot_map();
+              root["success"] = result.success;
+              root["slots"] = result.slots_json;
+              root["next_free_slot"] = (int) result.next_free_slot;
+
+    # Move fingerprint
+    - action: move_fingerprint
+      variables:
+        source_slot: int
+        dest_slot: int
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              auto result = id(fingerprint_grow_extended_id).move_fingerprint(
+                  (uint16_t) source_slot, (uint16_t) dest_slot);
+              root["success"] = result.success;
+              root["error_message"] = result.error_message;
+
+    # Read template (backup)
+    - action: read_template
+      variables:
+        slot: int
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              auto result = id(fingerprint_grow_extended_id).read_template((uint16_t) slot);
+              root["success"] = result.success;
+              root["checksum"] = result.checksum_hex;
+              root["length"] = (int) result.length;
+              root["data"] = result.data_base64;
+
+    # Write template (restore)
+    - action: write_template
+      variables:
+        slot: int
+        template_data: string
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              auto result = id(fingerprint_grow_extended_id).write_template(
+                  (uint16_t) slot, template_data);
+              root["success"] = result.success;
+              root["error_message"] = result.error_message;
+              root["length"] = (int) result.length;
