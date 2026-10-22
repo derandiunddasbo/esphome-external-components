@@ -174,7 +174,7 @@ class GetSlotMapAction : public Action<Ts...>, public Parented<FingerprintGrowEx
 };
 
 template<typename... Ts>
-class MoveSlotAction : public Action<Ts...>, public Parented<FingerprintGrowExtendedComponent> {
+class MoveFingerprintAction : public Action<Ts...>, public Parented<FingerprintGrowExtendedComponent> {
  public:
   TEMPLATABLE_VALUE(uint16_t, source_slot)
   TEMPLATABLE_VALUE(uint16_t, dest_slot)

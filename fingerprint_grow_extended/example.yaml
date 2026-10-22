@@ -13,9 +13,8 @@ wifi:
   password: !secret wifi_password
 
 external_components:
-  - source: github://<user>/<repository>@v1.0.0
+  - source: github://derandiunddasbo/esphome-external-components
     components: [fingerprint_grow_extended]
-    refresh: never
 
 # One shared UART bus for both components (same R503 sensor)
 uart:

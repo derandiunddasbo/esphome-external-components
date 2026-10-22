@@ -25,7 +25,7 @@ FingerprintGrowExtendedComponent = fingerprint_grow_extended_ns.class_(
     "FingerprintGrowExtendedComponent", cg.Component, uart.UARTDevice
 )
 GetSlotMapAction = fingerprint_grow_extended_ns.class_("GetSlotMapAction", automation.Action)
-MoveSlotAction = fingerprint_grow_extended_ns.class_("MoveSlotAction", automation.Action)
+MoveFingerprintAction = fingerprint_grow_extended_ns.class_("MoveFingerprintAction", automation.Action)
 ReadTemplateAction = fingerprint_grow_extended_ns.class_("ReadTemplateAction", automation.Action)
 WriteTemplateAction = fingerprint_grow_extended_ns.class_("WriteTemplateAction", automation.Action)
 
@@ -74,8 +74,8 @@ async def fingerprint_grow_extended_get_slot_map_to_code(config, action_id, temp
 
 
 @automation.register_action(
-    "fingerprint_grow_extended.move_slot",
-    MoveSlotAction,
+    "fingerprint_grow_extended.move_fingerprint",
+    MoveFingerprintAction,
     cv.Schema(
         {
             cv.GenerateID(): cv.use_id(FingerprintGrowExtendedComponent),
@@ -85,7 +85,7 @@ async def fingerprint_grow_extended_get_slot_map_to_code(config, action_id, temp
     ),
     synchronous=True,
 )
-async def fingerprint_grow_extended_move_slot_to_code(config, action_id, template_arg, args):
+async def fingerprint_grow_extended_move_fingerprint_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     tmpl = await cg.templatable(config[CONF_SOURCE_SLOT], args, cg.uint16)
