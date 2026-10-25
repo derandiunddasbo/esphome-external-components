@@ -1,0 +1,330 @@
+# Home Assistant examples for fingerprint_grow_extended
+#
+# Generic building blocks for the four ESPHome actions get_slot_map,
+# move_fingerprint, read_template and write_template (see example.yaml for
+# the ESPHome side). Use this file as a Home Assistant package, e.g.
+# /config/packages/fingerprint.yaml, or copy the parts you need.
+#
+# Before use:
+#   - Replace "fingerprint_example" in the action names
+#     (esphome.fingerprint_example_<action>) with the name of your ESPHome
+#     device, with dashes written as underscores.
+#   - The backup examples store one JSON file per slot in
+#     /config/fingerprint_backup/. Change the path if you prefer another
+#     location.
+#   - Notifications use persistent_notification.create. Replace it with your
+#     preferred notify action if you like.
+#
+# Contents:
+#   1. Slot map sensor (occupied slots, next free slot)
+#   2. Helper that always points to the next free slot
+#   3. Move a fingerprint safely (refuses to overwrite an occupied slot)
+#   4. Back up all occupied slots to files (manual and nightly)
+#   5. Restore a slot from its backup file (with verification)
+
+# ─────────────────────────────────────────────────────────────────────
+# 1. Slot map sensor
+# ─────────────────────────────────────────────────────────────────────
+# The state is the number of occupied slots. The attributes contain the list
+# of occupied slots and the next free slot. Note that the "slots" value of
+# the action response is a JSON string and must be converted with from_json.
+#
+# The sensor refreshes at start, hourly and whenever the event
+# "fingerprint_update_slot_map" is fired (the scripts below do that after
+# changes). If you have configured the fingerprint_count sensor of
+# fingerprint_grow, you can additionally add a state trigger for it.
+template:
+  - triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: 0
+      - trigger: event
+        event_type: fingerprint_update_slot_map
+    actions:
+      - action: esphome.fingerprint_example_get_slot_map
+        response_variable: slot_map
+    sensor:
+      - name: Fingerprint slot map
+        unique_id: fingerprint_slot_map
+        state: >-
+          {{ (slot_map.slots | from_json | count) if slot_map.success else none }}
+        attributes:
+          slots: >-
+            {{ (slot_map.slots | from_json) if slot_map.success else [] }}
+          next_free_slot: >-
+            {{ slot_map.next_free_slot if slot_map.success else none }}
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. Helper that points to the next free slot
+# ─────────────────────────────────────────────────────────────────────
+# Handy as a default value for an enrollment dashboard or script.
+input_number:
+  fingerprint_next_free_slot:
+    name: Fingerprint next free slot
+    min: 0
+    max: 199
+    step: 1
+    mode: box
+
+automation:
+  - id: fingerprint_set_next_free_slot
+    alias: "Fingerprint: keep helper at next free slot"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: sensor.fingerprint_slot_map
+        attribute: next_free_slot
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.fingerprint_slot_map', 'next_free_slot') is number }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.fingerprint_next_free_slot
+        data:
+          # 200 means "all slots occupied"; the helper only goes up to 199
+          value: >-
+            {{ [state_attr('sensor.fingerprint_slot_map', 'next_free_slot') | int(0), 199] | min }}
+
+  # ───────────────────────────────────────────────────────────────────
+  # 4b. Nightly backup
+  # ───────────────────────────────────────────────────────────────────
+  # The sensor updates a slot's template whenever the finger is used, so the
+  # checksums change during normal operation. A regular backup keeps the
+  # snapshots current; older backups can still be restored and work.
+  - id: fingerprint_nightly_backup
+    alias: "Fingerprint: nightly backup"
+    triggers:
+      - trigger: time
+        at: "03:30:00"
+    actions:
+      - action: script.fingerprint_backup
+
+script:
+  # ───────────────────────────────────────────────────────────────────
+  # 3. Move a fingerprint
+  # ───────────────────────────────────────────────────────────────────
+  # The sensor silently overwrites an occupied destination slot, so the
+  # script checks the slot map first.
+  fingerprint_move:
+    alias: "Fingerprint: move to another slot"
+    mode: single
+    fields:
+      source_slot:
+        name: Source slot
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 199
+            mode: box
+      dest_slot:
+        name: Destination slot
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 199
+            mode: box
+    sequence:
+      - action: esphome.fingerprint_example_get_slot_map
+        response_variable: slot_map
+      - if:
+          - condition: template
+            value_template: "{{ not slot_map.success }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_move
+              title: "Fingerprint move failed"
+              message: "The slot map could not be read - nothing was changed."
+          - stop: "Slot map not readable"
+            error: true
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (dest_slot | int) in (slot_map.slots | from_json | map('int') | list) }}
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_move
+              title: "Fingerprint move refused"
+              message: "Slot {{ dest_slot | int }} is already occupied - nothing was changed."
+          - stop: "Destination slot is occupied"
+            error: true
+      - action: esphome.fingerprint_example_move_fingerprint
+        data:
+          source_slot: "{{ source_slot | int }}"
+          dest_slot: "{{ dest_slot | int }}"
+        response_variable: result
+      - if:
+          - condition: template
+            value_template: "{{ not result.success }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_move
+              title: "Fingerprint move failed"
+              message: >-
+                Slot {{ source_slot | int }} -> {{ dest_slot | int }}:
+                {{ result.error_message }}
+          - stop: "Move failed"
+            error: true
+      # refresh the slot map sensor
+      - event: fingerprint_update_slot_map
+
+  # ───────────────────────────────────────────────────────────────────
+  # 4a. Back up all occupied slots
+  # ───────────────────────────────────────────────────────────────────
+  fingerprint_backup:
+    alias: "Fingerprint: back up all slots"
+    mode: single
+    sequence:
+      - action: esphome.fingerprint_example_get_slot_map
+        response_variable: slot_map
+      - if:
+          - condition: template
+            value_template: "{{ not slot_map.success }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_backup
+              title: "Fingerprint backup failed"
+              message: "The slot map could not be read - backup aborted."
+          - stop: "Slot map not readable"
+            error: true
+      - repeat:
+          for_each: "{{ slot_map.slots | from_json | map('int') | list }}"
+          sequence:
+            - action: esphome.fingerprint_example_read_template
+              data:
+                slot: "{{ repeat.item }}"
+              response_variable: tpl
+            - if:
+                - condition: template
+                  value_template: "{{ tpl.success }}"
+              then:
+                - action: shell_command.fingerprint_backup_save
+                  data:
+                    slot: "{{ repeat.item }}"
+                    checksum: "{{ tpl.checksum }}"
+                    length: "{{ tpl.length }}"
+                    data: "{{ tpl.data }}"
+              else:
+                - action: persistent_notification.create
+                  data:
+                    notification_id: "fingerprint_backup_slot_{{ repeat.item }}"
+                    title: "Fingerprint backup incomplete"
+                    message: "Slot {{ repeat.item }} could not be read."
+
+  # ───────────────────────────────────────────────────────────────────
+  # 5. Restore a slot from its backup file
+  # ───────────────────────────────────────────────────────────────────
+  # Refuses to overwrite an occupied slot unless "overwrite" is enabled.
+  # After writing, the template is read back and its checksum is compared
+  # with the one stored in the backup.
+  fingerprint_restore:
+    alias: "Fingerprint: restore slot from backup"
+    mode: single
+    fields:
+      slot:
+        name: Slot
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 199
+            mode: box
+      overwrite:
+        name: Overwrite occupied slot
+        default: false
+        selector:
+          boolean:
+    sequence:
+      - action: esphome.fingerprint_example_get_slot_map
+        response_variable: slot_map
+      - if:
+          - condition: template
+            value_template: >-
+              {{ not slot_map.success or
+                 ((slot | int) in (slot_map.slots | from_json | map('int') | list)
+                  and not (overwrite | default(false))) }}
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_restore
+              title: "Fingerprint restore refused"
+              message: >-
+                Slot {{ slot | int }} is occupied (or the slot map is not
+                readable). Enable "overwrite" to replace it.
+          - stop: "Restore refused"
+            error: true
+      - action: shell_command.fingerprint_backup_load
+        data:
+          slot: "{{ slot | int }}"
+        response_variable: file
+      - if:
+          - condition: template
+            value_template: "{{ file.returncode != 0 }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_restore
+              title: "Fingerprint restore failed"
+              message: "No backup file found for slot {{ slot | int }}."
+          - stop: "No backup file"
+            error: true
+      - variables:
+          backup: "{{ file.stdout | from_json }}"
+      - action: esphome.fingerprint_example_write_template
+        data:
+          slot: "{{ slot | int }}"
+          template_data: "{{ backup.data }}"
+        response_variable: write_result
+      - if:
+          - condition: template
+            value_template: "{{ not write_result.success }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: fingerprint_restore
+              title: "Fingerprint restore failed"
+              message: "Slot {{ slot | int }}: {{ write_result.error_message }}"
+          - stop: "Write failed"
+            error: true
+      # verify: read back and compare checksums
+      - action: esphome.fingerprint_example_read_template
+        data:
+          slot: "{{ slot | int }}"
+        response_variable: verify
+      - action: persistent_notification.create
+        data:
+          notification_id: fingerprint_restore
+          title: >-
+            {{ 'Fingerprint restored' if verify.success and verify.checksum == backup.checksum
+               else 'Fingerprint restore NOT verified' }}
+          message: >-
+            {% if verify.success and verify.checksum == backup.checksum %}
+              Slot {{ slot | int }} was restored and verified.
+            {% else %}
+              Slot {{ slot | int }}: the checksum after the restore differs from
+              the backup or the template could not be read back.
+            {% endif %}
+      - event: fingerprint_update_slot_map
+
+# ─────────────────────────────────────────────────────────────────────
+# Storage for the backup files
+# ─────────────────────────────────────────────────────────────────────
+# Each backup is one JSON file per slot containing the checksum, length and
+# the Base64 template data. The save command passes the values as arguments
+# to bash instead of embedding them in the script.
+shell_command:
+  fingerprint_backup_save: >-
+    bash -c 'mkdir -p /config/fingerprint_backup &&
+    printf "{\"slot\":%s,\"checksum\":\"%s\",\"length\":%s,\"data\":\"%s\"}\n" "$1" "$2" "$3" "$4"
+    > "/config/fingerprint_backup/slot_$1.json"'
+    _ "{{ slot }}" "{{ checksum }}" "{{ length }}" "{{ data }}"
+
+  fingerprint_backup_load: "cat /config/fingerprint_backup/slot_{{ slot }}.json"

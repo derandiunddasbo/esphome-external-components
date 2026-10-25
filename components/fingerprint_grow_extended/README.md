@@ -73,6 +73,10 @@ component inside an `api.respond` lambda.
 your configuration. The examples below show how to call them from Home
 Assistant and which values you get back.
 
+Ready-made Home Assistant building blocks (slot map sensor, safe
+move, backup/restore to files) are in
+[`example_home_assistant.yaml`](example_home_assistant.yaml).
+
 In Home Assistant the actions appear as `esphome.<node_name>_<action>`,
 where `<node_name>` is the name of your ESPHome device (with underscores
 instead of dashes).
@@ -91,8 +95,12 @@ Response:
 | Field | Description |
 |---|---|
 | `success` | `true` if the sensor was read successfully |
-| `slots` | JSON array of occupied slots, e.g. `"[0,1,5,12]"` |
+| `slots` | Occupied slots as a JSON string, e.g. `"[0,1,5,12]"` (convert with `from_json` in templates) |
 | `next_free_slot` | Lowest free slot number (`200` if all slots are occupied) |
+
+In templates, convert the slot list with `from_json`, for example
+`{{ slot_map.slots | from_json | count }}` for the number of occupied
+slots.
 
 ### move_fingerprint
 
@@ -153,6 +161,13 @@ example in a file or a helper).
 >   so the checksum does not identify a person. It identifies exactly one
 >   stored data set, which is useful for verifying that a template was
 >   transferred unchanged.
+> - The sensor updates the template stored in a slot whenever the finger
+>   is used. The data and checksum of a slot therefore change during
+>   normal operation, and a changed checksum is not a sign of a problem.
+>   A backup is a snapshot of the template at the time it was read.
+>   Older backups remain valid, though: a template restored with
+>   `write_template` works for recognition just like the current one.
+>   Regular backups (for example nightly) keep the snapshots up to date.
 
 ### write_template
 
@@ -175,7 +190,11 @@ Response:
 | `error_message` | Empty on success, otherwise the error text |
 | `length` | Number of bytes written |
 
-> **Note:** An occupied slot is overwritten without warning.
+> **Notes:**
+> - An occupied slot is overwritten without warning.
+> - The template can be restored from any earlier backup, even if the
+>   sensor has updated the slot since then (see the notes on
+>   `read_template`).
 
 Each of these functions handles one slot. To back up an entire sensor,
 use `get_slot_map` to find the occupied slots and call `read_template`
