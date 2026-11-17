@@ -36,7 +36,7 @@ CONF_TEMPLATE_DATA = "template_data"
 
 DEPENDENCIES = ["uart"]
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.ensure_list(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(FingerprintGrowExtendedComponent),
@@ -49,11 +49,12 @@ CONFIG_SCHEMA = (
 
 
 async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    await cg.register_component(var, config)
-    await uart.register_uart_device(var, config)
+    for conf in config:
+        var = cg.new_Pvariable(conf[CONF_ID])
+        await cg.register_component(var, conf)
+        await uart.register_uart_device(var, conf)
 
-    cg.add(var.set_password(config[CONF_PASSWORD]))
+        cg.add(var.set_password(conf[CONF_PASSWORD]))
 
 
 FINGERPRINT_GROW_EXTENDED_ACTION_SCHEMA = cv.Schema(
